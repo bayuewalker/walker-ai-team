@@ -1,7 +1,7 @@
 Last Updated  : 2026-04-05
-Status        : Phase 10.10 product-grade UI polish deployed with unified value-first rendering and shared AI insight engine across all Telegram views.
-COMPLETED     : Refactored all files in projects/polymarket/polyquantbot/interface/ui/views/ to value-first layout; added shared generate_insight(data) in helpers and applied 🧠 Insight footer in every view; updated performance display to signed value-first Total PnL and Unrealized; removed low-value clutter and retained latency only when available; generated forge report 10_10_ui_product_polish.md.
-IN PROGRESS   : Dev runtime verification for /start visual polish and callback parity after full view rewrite.
-NOT STARTED   : SENTINEL validation pass for phase 10.10 UI product polish.
-NEXT PRIORITY : SENTINEL validation required for ui product polish before merge. Source: projects/polymarket/polyquantbot/reports/forge/10_10_ui_product_polish.md
+Status        : Phase 10.11a UI critical fix applied for home data rendering, action routing parity, and callback mapping consistency in dev.
+COMPLETED     : Fixed projects/polymarket/polyquantbot/interface/ui/views/home_view.py with explicit balance/equity/positions/pnl fallbacks and hero PnL top block; added action-first strategy routing in projects/polymarket/polyquantbot/interface/telegram/view_handler.py; aligned reply keyboard actions in projects/polymarket/polyquantbot/telegram/ui/reply_keyboard.py; generated forge report projects/polymarket/polyquantbot/reports/forge/10_11a_ui_fix.md.
+IN PROGRESS   : Dev runtime validation for mixed callback + reply keyboard navigation to confirm no Unknown action regression.
+NOT STARTED   : SENTINEL validation pass for phase 10.11a UI critical fix.
+NEXT PRIORITY : SENTINEL validation required for ui critical fix before merge. Source: projects/polymarket/polyquantbot/reports/forge/10_11a_ui_fix.md
 KNOWN ISSUES  : docs/CLAUDE.md is missing from repository checklist path; full Telegram end-to-end UX validation requires bot credentials and live chat runtime.

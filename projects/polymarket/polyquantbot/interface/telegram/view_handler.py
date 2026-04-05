@@ -15,22 +15,39 @@ from ..ui.views import (
 )
 
 
+def render_action_view(action: str, data: Mapping[str, Any]) -> str:
+    """Render a view from an action string used by Telegram callbacks."""
+    action = action.strip().lower()
+
+    if action == "trade":
+        return render_positions_view(data)
+    elif action == "wallet":
+        return render_wallet_view(data)
+    elif action == "performance":
+        return render_performance_view(data)
+    elif action == "exposure":
+        return render_exposure_view(data)
+    elif action == "strategy":
+        return render_strategy_view(data)
+    elif action == "home":
+        return render_home_view(data)
+
+    return render_home_view(data)
+
+
 def render_view(name: str, payload: Mapping[str, Any]) -> str:
+    """Backward-compatible dispatcher for legacy route keys."""
     key = name.strip().lower()
-    if key == "home":
-        return render_home_view(payload)
-    if key == "wallet":
-        return render_wallet_view(payload)
-    if key == "performance":
-        return render_performance_view(payload)
-    if key in {"exposure", "portfolio"}:
-        return render_exposure_view(payload)
     if key in {"positions", "trade"}:
-        return render_positions_view(payload)
+        return render_action_view("trade", payload)
     if key in {"strategy", "strategies"}:
-        return render_strategy_view(payload)
-    if key == "risk":
-        return render_risk_view(payload)
+        return render_action_view("strategy", payload)
+    if key in {"exposure", "portfolio"}:
+        return render_action_view("exposure", payload)
     if key in {"market", "markets"}:
         return render_market_view(payload)
+    if key == "risk":
+        return render_risk_view(payload)
+    if key in {"wallet", "performance", "home"}:
+        return render_action_view(key, payload)
     return render_home_view(payload)

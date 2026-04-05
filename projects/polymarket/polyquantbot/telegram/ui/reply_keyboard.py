@@ -15,14 +15,14 @@ _REFRESH_BTN = "🔄 Refresh"
 _HOME_BTN = "🏠 Home"
 
 REPLY_MENU_MAP: dict[str, str] = {
-    _TRADE_BTN: "status",
+    _TRADE_BTN: "trade",
     _WALLET_BTN: "wallet",
     _PERFORMANCE_BTN: "performance",
     _EXPOSURE_BTN: "exposure",
     _SETTINGS_BTN: "settings",
     _STRATEGY_BTN: "strategy",
     _REFRESH_BTN: "refresh",
-    _HOME_BTN: "back_main",
+    _HOME_BTN: "home",
 }
 
 
