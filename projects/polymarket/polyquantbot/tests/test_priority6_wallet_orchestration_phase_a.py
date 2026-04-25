@@ -1,12 +1,13 @@
 """Priority 6 — Multi-Wallet Orchestration Phase A — Tests.
 
-Test IDs: WO-01 .. WO-10
+Test IDs: WO-01 .. WO-12
 
 Coverage:
   WO-01..WO-02  Domain model (WalletCandidate, RoutingRequest, OrchestrationResult)
   WO-03..WO-06  WalletSelectionPolicy filter chain
-  WO-07..WO-08  WalletSelectionPolicy failover and ranking
+  WO-07..WO-08  WalletSelectionPolicy risk gate (hard) and ranking
   WO-09..WO-10  WalletOrchestrator async route() + error handling
+  WO-11..WO-12  WalletSelectionPolicy strategy failover + exposure ceiling
 """
 from __future__ import annotations
 
@@ -159,19 +160,18 @@ def test_wo_06_policy_strategy_aware_selects_matching_wallet():
     assert result.failover_used is False
 
 
-# ── WO-07: Policy — failover when risk filters block all candidates ───────────
+# ── WO-07: Policy — risk gate is hard; over-drawdown wallet is NOT routed ─────
 
-def test_wo_07_policy_failover_on_risk_blocked():
-    """WO-07: Wallet exceeding MAX_DRAWDOWN triggers failover; result is still routed."""
+def test_wo_07_policy_risk_blocked_not_routed():
+    """WO-07: Wallet exceeding MAX_DRAWDOWN returns risk_blocked — risk gate is never bypassed."""
     over_drawdown = _candidate(
         wallet_id="wlc_risky",
         drawdown_pct=MAX_DRAWDOWN + 0.01,  # 0.09 — above ceiling
     )
     result = _policy.select(_request(), [over_drawdown])
-    # Failover relaxes risk filter → should still route using the only funded candidate.
-    assert result.outcome == "routed"
-    assert result.selected_wallet_id == "wlc_risky"
-    assert result.failover_used is True
+    assert result.outcome == "risk_blocked"
+    assert result.selected_wallet_id is None
+    assert result.failover_used is False
 
 
 # ── WO-08: Policy — primary ranked above secondary ───────────────────────────
@@ -213,3 +213,36 @@ async def test_wo_10_orchestrator_handles_policy_exception():
     assert result.outcome == "error"
     assert result.selected_wallet_id is None
     assert "simulated policy crash" in result.reason
+
+
+# ── WO-11: Policy — strategy failover routes risk-safe wallet ────────────────
+
+def test_wo_11_policy_strategy_failover_routes_risk_safe_wallet():
+    """WO-11: When a funded+risk-safe wallet fails the strategy filter, strategy
+    failover selects it with failover_used=True — risk gate is not relaxed."""
+    wrong_strategy = _candidate(
+        wallet_id="wlc_wrong_strategy",
+        strategy_tags=frozenset({"arbitrage"}),  # does not include "momentum"
+        drawdown_pct=0.0,
+        exposure_pct=0.0,
+        balance_usd=500.0,
+    )
+    result = _policy.select(_request(strategy_tag="momentum"), [wrong_strategy])
+    assert result.outcome == "routed"
+    assert result.selected_wallet_id == "wlc_wrong_strategy"
+    assert result.failover_used is True
+
+
+# ── WO-12: Policy — exposure at ceiling is NOT routed ────────────────────────
+
+def test_wo_12_policy_exposure_at_ceiling_not_routed():
+    """WO-12: Wallet at MAX_TOTAL_EXPOSURE_PCT (strict <) returns risk_blocked."""
+    at_ceiling = _candidate(
+        wallet_id="wlc_exposed",
+        exposure_pct=MAX_TOTAL_EXPOSURE_PCT,  # 0.10 — equals ceiling, strict < → blocked
+        drawdown_pct=0.0,
+    )
+    result = _policy.select(_request(), [at_ceiling])
+    assert result.outcome == "risk_blocked"
+    assert result.selected_wallet_id is None
+    assert result.failover_used is False

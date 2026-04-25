@@ -5,12 +5,15 @@ Implements a deterministic filter chain for multi-wallet routing:
   1. Ownership   — tenant_id + user_id must match request.
   2. Lifecycle   — wallet must be in "active" state.
   3. Balance     — wallet.balance_usd >= request.required_usd.
-  4. Strategy    — wallet's strategy_tags must include request.strategy_tag (or be empty).
-  5. Risk gate   — drawdown_pct and exposure_pct within ceiling constants.
+  4. Risk gate   — drawdown_pct <= MAX_DRAWDOWN AND exposure_pct < MAX_TOTAL_EXPOSURE_PCT.
+                   HARD constraint — never bypassed, never relaxed.
+  5. Strategy    — wallet's strategy_tags must include request.strategy_tag (or be empty).
 
-Failover path: when no candidate passes filters 4+5 but funded+active candidates
-exist, the policy relaxes strategy and risk filters and re-selects from the funded
-set. failover_used=True is set on the result to signal this path to the caller.
+Failover path: when no candidate passes filter 5 (strategy) but risk-safe funded
+candidates exist, the policy relaxes strategy only and re-selects from the risk-safe
+set. failover_used=True signals this path to the caller.
+
+Risk gate (filter 4) is NEVER relaxed under any path.
 
 Ranking among eligible candidates:
   - Primary wallet preferred over secondary.
@@ -96,14 +99,28 @@ class WalletSelectionPolicy:
                 candidates_evaluated=total,
             )
 
-        # ── Filters 5+6: strategy + risk ──────────────────────────────────────
-        eligible = [
-            c for c in funded
-            if self._strategy_ok(c, request.strategy_tag) and self._risk_ok(c)
+        # ── Filter 5: risk gate (HARD — never bypassed) ───────────────────────
+        risk_safe = [c for c in funded if self._risk_ok(c)]
+        if not risk_safe:
+            return OrchestrationResult(
+                outcome="risk_blocked",
+                selected_wallet_id=None,
+                reason=(
+                    f"all {len(funded)} funded candidate(s) failed risk gate "
+                    f"(drawdown_pct > {_DRAWDOWN_CEILING} or "
+                    f"exposure_pct >= {_EXPOSURE_CEILING})"
+                ),
+                candidates_evaluated=total,
+                failover_used=False,
+            )
+
+        # ── Filter 6: strategy ────────────────────────────────────────────────
+        strategy_eligible = [
+            c for c in risk_safe if self._strategy_ok(c, request.strategy_tag)
         ]
 
-        if eligible:
-            best = self._rank(eligible)
+        if strategy_eligible:
+            best = self._rank(strategy_eligible)
             log.info(
                 "wallet_selected",
                 wallet_id=best.wallet_id,
@@ -118,17 +135,17 @@ class WalletSelectionPolicy:
                 failover_used=False,
             )
 
-        # ── Failover: relax strategy + risk, keep ownership + lifecycle + balance
+        # ── Strategy failover: relax strategy only (risk gate remains enforced) ─
         log.warning(
-            "wallet_selection_failover",
-            funded_count=len(funded),
+            "wallet_selection_strategy_failover",
+            risk_safe_count=len(risk_safe),
             strategy_tag=request.strategy_tag,
         )
-        best = self._rank(funded)
+        best = self._rank(risk_safe)
         return OrchestrationResult(
             outcome="routed",
             selected_wallet_id=best.wallet_id,
-            reason="failover — strategy/risk filters relaxed; primary funded wallet selected",
+            reason="failover — strategy filter relaxed; risk gate remains enforced",
             candidates_evaluated=total,
             failover_used=True,
         )

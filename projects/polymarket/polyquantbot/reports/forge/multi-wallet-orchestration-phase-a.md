@@ -2,6 +2,7 @@
 
 ## Validation Metadata
 
+- Branch: NWAP/multi-wallet-orchestration
 - Validation Tier: MAJOR
 - Claim Level: FOUNDATION
 - Validation Target: `server/orchestration/` — WalletOrchestrator, WalletSelectionPolicy, and orchestration domain schemas (sections 37–38 of WORKTODO.md)
@@ -21,13 +22,13 @@ Priority 6 Phase A delivers the orchestration foundation for multi-wallet routin
 - `WalletOrchestrator`: async central routing authority — stateless, delegates to policy, logs every routing decision with structlog
 
 **Section 38 — Allocation Across Wallets:**
-- `WalletSelectionPolicy`: deterministic 5-filter chain
+- `WalletSelectionPolicy`: deterministic 6-filter chain
   1. Ownership filter (tenant_id + user_id must match)
   2. Lifecycle filter (status must be "active")
   3. Balance filter (balance_usd >= required_usd)
-  4. Strategy compatibility filter (empty strategy_tags = all strategies permitted)
-  5. Risk gate (drawdown_pct ≤ MAX_DRAWDOWN=0.08, exposure_pct < MAX_TOTAL_EXPOSURE_PCT=0.10)
-- Failover path: relaxes filters 4+5 when no candidate passes the full chain but funded+active candidates exist; `failover_used=True` signals this path to callers
+  4. Risk gate — HARD, never bypassed (drawdown_pct ≤ MAX_DRAWDOWN=0.08, exposure_pct < MAX_TOTAL_EXPOSURE_PCT=0.10); returns `risk_blocked` if all funded candidates fail
+  5. Strategy compatibility filter (empty strategy_tags = all strategies permitted)
+  6. Strategy failover: if no candidate passes strategy filter but risk-safe funded candidates exist, relaxes strategy only; `failover_used=True`; risk gate remains enforced
 - Ranking: primary wallet preferred over secondary; descending balance as tiebreaker
 - Risk constants imported directly from `server.schemas.portfolio` — no duplication
 
@@ -42,12 +43,14 @@ WalletOrchestrator.route(request: RoutingRequest, candidates: list[WalletCandida
       ↓
 WalletSelectionPolicy.select(request, candidates)
       │
-      ├─ Filter 1: ownership (tenant_id + user_id)        → no_candidate if no match
-      ├─ Filter 2: lifecycle_status == "active"           → no_active_wallet if none
-      ├─ Filter 3: balance_usd >= required_usd            → insufficient_balance if none
-      ├─ Filter 4: strategy_tags compatibility            ┐ failover relaxes
-      ├─ Filter 5: risk gate (drawdown + exposure)        ┘ these two filters
-      └─ Rank eligible: is_primary desc, balance_usd desc → routed
+      ├─ Filter 1: ownership (tenant_id + user_id)            → no_candidate if no match
+      ├─ Filter 2: lifecycle_status == "active"               → no_active_wallet if none
+      ├─ Filter 3: balance_usd >= required_usd                → insufficient_balance if none
+      ├─ Filter 4: risk gate (drawdown + exposure) [HARD]     → risk_blocked if all fail
+      ├─ Filter 5: strategy_tags compatibility                → strategy failover if all fail
+      │            (failover relaxes strategy only —          → routed, failover_used=True
+      │             risk gate is never relaxed)
+      └─ Rank eligible: is_primary desc, balance_usd desc     → routed, failover_used=False
       ↓
 OrchestrationResult(outcome, selected_wallet_id, failover_used, ...)
 ```
@@ -82,10 +85,11 @@ Risk constants are locked per AGENTS.md:
 
 ## 4. What Is Working
 
-- All 10 tests pass: WO-01 .. WO-10
+- All 12 tests pass: WO-01 .. WO-12
 - WalletCandidate + RoutingRequest + OrchestrationResult frozen dataclasses construct correctly
 - Policy routes correctly for: single active wallet, multi-candidate ranking (primary first), strategy-aware selection, ownership mismatch, deactivated lifecycle, insufficient balance
-- Failover activates when risk-blocked wallets are the only funded candidates
+- Risk gate is hard: wallets over MAX_DRAWDOWN (WO-07) or at MAX_TOTAL_EXPOSURE_PCT (WO-12) return `risk_blocked` — never routed
+- Strategy failover (WO-11): wallet that fails strategy filter but passes risk gate is routed with `failover_used=True`; risk gate not relaxed
 - WalletOrchestrator.route() is async, delegates to policy, catches policy exceptions and returns outcome="error" with reason
 - Auto-generated correlation_ids are unique per request (rtr_ prefix)
 - Structured logging on every routing decision (start, done, failover warning, error)
@@ -98,7 +102,7 @@ Risk constants are locked per AGENTS.md:
 
 - `server/orchestration/__init__.py` uses relative `server.*` imports; project-level tests use `projects.polymarket.polyquantbot.*` path. The `__init__.py` is a convenience export for runtime use — tests import directly from the submodule paths. No runtime wiring into `server/main.py` yet (Phase B will add service layer wiring).
 - WalletCandidate.lifecycle_status is typed as `str` (not `WalletLifecycleStatus`) to avoid circular import from the schema package. Callers pass `.value` of the enum; this is an intentional boundary.
-- `exposure_pct` risk ceiling uses strict `<` (less-than) while `drawdown_pct` uses `<=` — consistent with portfolio guardrails in Priority 5.
+- `exposure_pct` risk ceiling uses strict `<` (less-than, not `<=`) while `drawdown_pct` uses `<=` — consistent with portfolio guardrails in Priority 5. A wallet at exactly MAX_TOTAL_EXPOSURE_PCT=0.10 is blocked.
 - No DB persistence of routing decisions yet — deferred to Phase B (orchestration_persistence.py).
 
 ---
